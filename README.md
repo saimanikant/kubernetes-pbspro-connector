@@ -7,12 +7,13 @@ A hook is a block of Python code that PBS executes at certain events, for exampl
 
 Make sure you have a  cluster of nodes where, both [Kubernetes](https://github.com/kubernetes/kubernetes) and [PBS Professional](https://github.com/PBSPro/pbspro) are setup. 
 Enter the value for `apiHost`, the location of api-server, in kubernetes.go file.
+Setup kubelet to a watched  directory by using the --config option. The value to --config is the directory that the kubelet will watch for pod manifests to run. First create a directory for this, and then start the kubelet.  
 To Build the custom scheduler, clone the PBS-kubernetes repository and move into the scheduler folder and run the following command:
 > go build -a --ldflags '-extldflags "-static"' -tags netgo -installsuffix netgo .  
 
 The above command creates the scheduler binary in the current directory.
 
-Create a hook in PBS for execjob_launch and execjob_end hook events by importing the hook script pbs_kubernetes.PY and the configuration file pbs_kubernetes.CF present outside the scheduler folder.
+Create a hook in PBS for execjob_launch and execjob_end hook events by importing the hook script pbs_kubernetes.PY and the configuration file pbs_kubernetes.CF present outside the scheduler folder. Add the value of --config passed to kubelet to "kubelet_config" in pbs_kubernetes.CF file.
 Following is a example of the hook created in PBS:  
 > Hook pbs-kubernetes  
     type = site  
