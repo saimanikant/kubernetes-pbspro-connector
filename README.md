@@ -13,7 +13,7 @@ To Build the custom scheduler, clone the kubernetes-pbspro-connector repository 
 
 The above command creates the scheduler binary in the current directory.
 
-Create a hook in PBS Pro for execjob_launch and execjob_end hook events by importing the hook script pbs_kubernetes.PY and the configuration file pbs_kubernetes.CF present outside the scheduler folder of kubernetes-pbspro-connector. Add the value of --config passed to kubelet to "kubelet_config" in pbs_kubernetes.CF file.
+Create a hook in PBS Pro for execjob_launch and execjob_end hook events by importing the hook script pbs_kubernetes.PY and the configuration file pbs_kubernetes.CF present in the root folder of kubernetes-pbspro-connector. Add the value of --config passed to kubelet to "kubelet_config" in pbs_kubernetes.CF file.
 Following is a example of the hook created in PBS Pro:  
 > Hook pbs-kubernetes  
     type = site  
