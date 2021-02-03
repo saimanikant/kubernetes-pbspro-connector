@@ -46,12 +46,12 @@ import (
 
 var processLock = &sync.Mutex{}
 
-func resolveUnscheduledPods(interval int, done chan struct{}, wg *sync.WaitGroup) {			
+func resolveUnscheduledPods(interval int, done chan struct{}, apiserver string, token string, wg *sync.WaitGroup) {			
 	for {
 		log.Println("\nStarting Scheduler Iteration")
 		select {
 		case <-time.After(time.Duration(interval) * time.Second):							
-			err := reschedulePod()
+			err := reschedulePod(apiserver, token)
 			if err != nil {
 				log.Println(err)
 			}
@@ -64,8 +64,8 @@ func resolveUnscheduledPods(interval int, done chan struct{}, wg *sync.WaitGroup
 	}
 }
 
-func trackUnscheduledPods(done chan struct{}, wg *sync.WaitGroup) {	
-	pods, errc := watchUnscheduledPods()
+func trackUnscheduledPods(done chan struct{}, apiserver string, token string, wg *sync.WaitGroup) {	
+	pods, errc := watchUnscheduledPods(apiserver, token)
 
 	for {		
 		select {
@@ -74,7 +74,7 @@ func trackUnscheduledPods(done chan struct{}, wg *sync.WaitGroup) {
 		case pod := <-pods:
 			processLock.Lock()
 			time.Sleep(2 * time.Second)			
-			err := schedulePod(&pod)
+			err := schedulePod(&pod, apiserver, token)
 			if err != nil {
 				log.Println(err)
 			}
@@ -87,30 +87,30 @@ func trackUnscheduledPods(done chan struct{}, wg *sync.WaitGroup) {
 	}
 }
 
-func schedulePod(pod *Pod) error {	
-	nodevalue,err := fit(pod)
+func schedulePod(pod *Pod, apiserver string, token string) error {	
+	nodevalue,err := fit(pod, apiserver, token)
 	if err != nil {
 		return err
 	}
 	if nodevalue == "" {
 		return nil
 	}
-	err = bind(pod, nodevalue)
+	err = bind(pod, nodevalue, apiserver, token)
 	if err != nil {
 		return err
 	}	
 	return nil
 }
 
-func reschedulePod() error {
+func reschedulePod(apiserver string, token string) error {
 	processLock.Lock()
 	defer processLock.Unlock()
-	pods, err := getUnscheduledPods()
+	pods, err := getUnscheduledPods(apiserver, token)
 	if err != nil {
 		return err
 	}
 	for _, pod := range pods.Items {		
-		err := schedulePod(&pod)
+		err := schedulePod(&pod, apiserver, token)
 		if err != nil {
 			log.Println(err)
 		}

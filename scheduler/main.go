@@ -45,19 +45,49 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"os/exec"        
+	"fmt"
+	"encoding/base64"
 )
 
 
 func main() {	
+ 
+	apiserver, err := exec.Command("/usr/bin/kubectl", "config", "view", "--minify", "-o", "jsonpath='{.clusters[0].cluster.server}'").Output()
+        if err != nil {
+        	log.Printf("%s", err)
+    	}
+	apiserver = apiserver[9 : len(apiserver)-1]         
+        fmt.Printf("API server: %s\n", apiserver)
+
+	serviceacc := "default"
+
+        secret, err := exec.Command("/usr/bin/kubectl", "get", "serviceaccount", serviceacc, "-o", "jsonpath='{.secrets[0].name}'").Output()
+        if err != nil {
+                log.Printf("%s", err)
+        }
+        secret = secret[1 : len(secret)-1]
+        fmt.Printf("Service account: %s\n", secret)
+
+        token_en, err := exec.Command("/usr/bin/kubectl", "get", "secret", string(secret), "-o", "jsonpath='{.data.token}'").Output()
+        if err != nil {
+                log.Printf("error %s\n", err)
+        }
+
+	token_de, err := base64.StdEncoding.DecodeString(string(token_en[1 : len(token_en)-1]))
+        if err != nil {
+                log.Fatal("error:", err)
+        }
+
 
 	channel := make(chan struct{})
 	var wait sync.WaitGroup
 
 	wait.Add(1)
-	go trackUnscheduledPods(channel, &wait)
+	go trackUnscheduledPods(channel, string(apiserver), string(token_de), &wait)
 
 	wait.Add(1)
-	go resolveUnscheduledPods(20, channel, &wait)
+	go resolveUnscheduledPods(20, channel, string(apiserver), string(token_de), &wait)
 
 	signalch := make(chan os.Signal, 1)
 	signal.Notify(signalch, syscall.SIGINT, syscall.SIGTERM)

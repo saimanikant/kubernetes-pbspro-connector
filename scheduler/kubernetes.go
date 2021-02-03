@@ -52,6 +52,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"crypto/tls"
 )
 
 type PBSPodList struct {
@@ -69,7 +70,6 @@ type PBSPodMetadata struct {
 
 
 var (
-	apiHost           = "127.0.0.1:8001"
 	bindingEndpoint  = "/api/v1/namespaces/default/pods/%s/binding/"
 	eventEndpoint    = "/api/v1/namespaces/default/events"
 	nodeEndpoint     = "/api/v1/nodes"
@@ -78,7 +78,7 @@ var (
 	watchPodEndpoint = "/api/v1/watch/pods"
 )
 
-func postsEvent(event Event) error {
+func postsEvent(event Event, apiserver string, token string) error {
 	var bf []byte
 	body := bytes.NewBuffer(bf)
 	error := json.NewEncoder(body).Encode(event)
@@ -92,14 +92,20 @@ func postsEvent(event Event) error {
 		Header:        make(http.Header),
 		Method:        http.MethodPost,
 		URL: &url.URL{
-			Host:   apiHost,
+			Host:   apiserver,
 			Path:   eventEndpoint,
-			Scheme: "http",
+			Scheme: "https",
 		},
 	}
 	req.Header.Set("Content-Type", "application/json")
+        req.Header.Set("Authorization", "Bearer " + token)
 
-	res, error := http.DefaultClient.Do(req)
+	tr := &http.Transport{
+        	TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+        }
+        client := &http.Client{Transport: tr}
+
+	res, error := client.Do(req)
 	if error != nil {
 		return error
 	}
@@ -109,28 +115,34 @@ func postsEvent(event Event) error {
 	return nil
 }
 
-func watchUnscheduledPods() (<-chan Pod, <-chan error) {	
+func watchUnscheduledPods(apiserver string, token string) (<-chan Pod, <-chan error) {	
 	pods := make(chan Pod)
 	errc := make(chan error, 1)
 
 	val := url.Values{}
-	val.Set("fieldSelector", "spec.nodeName=")	
+	val.Set("fieldSelector", "spec.nodeName=")
 	val.Add("sort","creationTimestamp asc")
 	req  := &http.Request{
 		Header: make(http.Header),
 		Method: http.MethodGet,
 		URL: &url.URL{
-			Host:     apiHost,
+			Host:     apiserver,
 			Path:     watchPodEndpoint,
 			RawQuery: val.Encode(),
-			Scheme:   "http",
+			Scheme:   "https",
 		},
 	}	
 	req.Header.Set("Accept", "application/json, */*")
+	req.Header.Set("Authorization", "Bearer " + token)
+
+	tr := &http.Transport{
+        	TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+        }
+        client := &http.Client{Transport: tr}
 
 	go func() {		
 		for {			
-			res, error := http.DefaultClient.Do(req)
+			res, error := client.Do(req)
 			if error != nil {
 				errc <- error
 				time.Sleep(5 * time.Second)
@@ -158,11 +170,10 @@ func watchUnscheduledPods() (<-chan Pod, <-chan error) {
 			}
 		}
 	}()
-		
 	return pods, errc
 }
 
-func getUnscheduledPods() (*PodList, error) {
+func getUnscheduledPods(apiserver string, token string) (*PodList, error) {
 	var podList PodList	
 
 	val := url.Values{}
@@ -172,15 +183,21 @@ func getUnscheduledPods() (*PodList, error) {
 		Header: make(http.Header),
 		Method: http.MethodGet,
 		URL: &url.URL{
-			Host:     apiHost,
+			Host:     apiserver,
 			Path:     podEndpoint,
 			RawQuery: val.Encode(),
-			Scheme:   "http",
+			Scheme:   "https",
 		},
 	}
 	req.Header.Set("Accept", "application/json, */*")
+        req.Header.Set("Authorization", "Bearer " + token)
 
-	res, error := http.DefaultClient.Do(req)
+	tr := &http.Transport{
+        	TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+        }
+        client := &http.Client{Transport: tr}
+
+	res, error := client.Do(req)
 	if error != nil {
 		return nil, error
 	}
@@ -192,7 +209,7 @@ func getUnscheduledPods() (*PodList, error) {
 }
 
 
-func fit(pod *Pod) (string,error) {
+func fit(pod *Pod, apiserver string, token string) (string,error) {
 	
 	var spaceRequired int
 	var memoryRequired int
@@ -226,7 +243,7 @@ func fit(pod *Pod) (string,error) {
 		mem = mem + "MB"
 
 		argstr := []string{"-l","select=1:ncpus=" + ncpus + ":mem="+mem,"-N",pod.Metadata.Name,"-v","PODNAME="+pod.Metadata.Name,"kubernetes_job.sh"}
-		out, err := exec.Command("qsub", argstr...).Output()
+		out, err := exec.Command("/opt/pbs/bin/qsub", argstr...).Output()
 	        if err != nil {
 	            log.Fatal(err)
         	    os.Exit(1)
@@ -237,8 +254,7 @@ func fit(pod *Pod) (string,error) {
         	time.Sleep(5000 * time.Millisecond)
 		
 		// Store jobid in pod
-
-		annotation(pod,jobid)	
+		annotation(pod, jobid, apiserver, token)	
 							    
 	} else {				
 		jobid = pod.Metadata.Annotations["JobID"] 						
@@ -251,7 +267,7 @@ func fit(pod *Pod) (string,error) {
 		return nodename, nil
 	} 
 
-	out1, err := exec.Command("bash", "-c" ,"qstat -f " + jobid).Output()        
+	out1, err := exec.Command("bash", "-c" ,"/opt/pbs/bin/qstat -f " + jobid).Output()        
         if err != nil {
             log.Fatal(err)
             os.Exit(1)
@@ -284,9 +300,7 @@ func fit(pod *Pod) (string,error) {
 			Uid:       pod.Metadata.Uid,
 		},
 	}
-
-	postsEvent(event)		
-	
+	postsEvent(event, apiserver, token)		
 	return "",nil
 	
 	
@@ -297,7 +311,7 @@ func findnode(jobid string) string {
 
 	returnstring := ""
 
-        out1, err := exec.Command("bash", "-c" ,"qstat -f " + jobid).Output()        
+        out1, err := exec.Command("bash", "-c" ,"/opt/pbs/bin/qstat -f " + jobid).Output()        
         if err != nil {
             log.Fatal(err)
             os.Exit(1)
@@ -350,7 +364,7 @@ func findnode(jobid string) string {
 
 
 
-func annotation(pod *Pod, jobid string) {		
+func annotation(pod *Pod, jobid string, apiserver string, token string) {		
 					
 	annotations := map[string]string{
 		"JobID": jobid,
@@ -369,7 +383,7 @@ func annotation(pod *Pod, jobid string) {
 		os.Exit(1)
 	}
 	
-	url := "http://" + apiHost + podNamespace + pod.Metadata.Name
+	url := "https://" + apiserver + podNamespace + pod.Metadata.Name
 	req, error := http.NewRequest("PATCH", url, body)
 	if error != nil {
 		log.Println(error)
@@ -378,8 +392,13 @@ func annotation(pod *Pod, jobid string) {
 	
 	req.Header.Set("Content-Type", "application/strategic-merge-patch+json")
 	req.Header.Set("Accept", "application/json, */*")
-	
-	res, error := http.DefaultClient.Do(req)
+        req.Header.Set("Authorization", "Bearer " + token)
+
+        tr := &http.Transport{
+        	TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+        }
+        client := &http.Client{Transport: tr}
+	res, error := client.Do(req)
 	if error != nil {
 		log.Println(error)
 		os.Exit(1)
@@ -394,7 +413,7 @@ func annotation(pod *Pod, jobid string) {
 }
 
 
-func bind(pod *Pod, node string) error {
+func bind(pod *Pod, node string, apiserver string, token string) error {
 	bindreq := Binding{
 		ApiVersion: "v1",
 		Kind:       "Binding",
@@ -419,18 +438,26 @@ func bind(pod *Pod, node string) error {
 		Header:        make(http.Header),
 		Method:        http.MethodPost,
 		URL: &url.URL{
-			Host:   apiHost,
+			Host:   apiserver,
 			Path:   fmt.Sprintf(bindingEndpoint, pod.Metadata.Name),
-			Scheme: "http",
+			Scheme: "https",
 		},
 	}
 	req.Header.Set("Content-Type", "application/json")
+        req.Header.Set("Authorization", "Bearer " + token)
 
-	res, error := http.DefaultClient.Do(req)
+	tr := &http.Transport{
+        	TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+        }
+        client := &http.Client{Transport: tr}
+
+	res, error := client.Do(req)
 	if error != nil {
 		return error
 	}
 	if res.StatusCode != 201 {
+                log.Println(res)
+                log.Println(error)
 		return errors.New("Binding: Unexpected HTTP status code" + res.Status)
 	}
 
@@ -454,5 +481,5 @@ func bind(pod *Pod, node string) error {
 		},
 	}
 	log.Println(msg)
-	return postsEvent(event)
+	return postsEvent(event, apiserver, token)
 }
